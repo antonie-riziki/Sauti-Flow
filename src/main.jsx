@@ -1,43 +1,135 @@
 import React, {useCallback, useEffect, useRef, useState} from 'react';
-import { createRoot } from 'react-dom/client';
-import {Mic, Phone, MessageSquare, Check, X, Volume2, Sparkles, LoaderCircle, ChevronRight} from 'lucide-react';
+import {createRoot} from 'react-dom/client';
+import {Check, ChevronRight, LoaderCircle, Mic, Sparkles, Volume2, X} from 'lucide-react';
 import './styles.css';
 
 const examples = ['Check my Airtel data balance', 'Call Mum', 'Text John I’m on my way'];
-const statusCopy = {idle:'Tap to speak', listening:'Listening… tap again when you’re done', processing:'Understanding your request…', executing:'Working on it…', success:'Done', error:'I couldn’t complete that.', confirmation:'Your confirmation is needed'};
+const statusCopy = {
+  idle: 'Tap to speak', listening: 'Listening… tap again when you’re done', processing: 'Understanding your request…',
+  clarifying: 'I need one more detail', confirming: 'Your confirmation is needed', executing: 'Preparing the Android hand-off…',
+  speaking: 'Speaking', success: 'Plan ready', error: 'I couldn’t complete that.'
+};
 
-function classify(text) {
-  const t = text.toLowerCase();
-  const operator = t.includes('airtel') ? 'Airtel' : t.includes('safaricom') ? 'Safaricom' : t.includes('telkom') ? 'Telkom Kenya' : null;
-  if (/open (my )?(phone|dialer)/.test(t)) return {kind:'phone', label:'Open phone', message:'I’ll open your phone dialer.', safe:true};
-  if (/open (my )?messages?/.test(t)) return {kind:'messages', label:'Open messages', message:'Opening your messages.', safe:true};
-  if (/open whatsapp/.test(t)) return {kind:'whatsapp', label:'Open WhatsApp', message:'Opening WhatsApp.', safe:true};
-  if (/call|dial/.test(t)) { const who = text.match(/(?:call|dial)\s+(.+)/i)?.[1] || 'that number'; return {kind:'call', label:`Call ${who}`, message:`I’ll open the dialer for ${who}.`, safe:true}; }
-  if (/whatsapp|message.*whatsapp/.test(t)) return {kind:'whatsappMessage', label:'Prepare WhatsApp message', message:'I’ll prepare that WhatsApp message. You’ll review it before sending.', safe:true};
-  if (/sms|text /.test(t)) return {kind:'sms', label:'Prepare SMS', message:'I’ll prepare that text message. You’ll review it before sending.', safe:true};
-  if (/buy|send airtime|mobile money/.test(t)) return {kind:'purchase', label: operator ? `Buy ${operator} service` : 'Purchase telecom service', message: operator ? `I found an ${operator} service. Please confirm before I open the secure operator flow.` : 'This action could affect your balance. Please confirm before I continue.', safe:false};
-  if (/balance|ussd|data/.test(t)) return {kind:'ussd', label: operator ? `Check ${operator} service` : 'Find telecom service', message: operator ? `I’ll look for the current verified ${operator} service and open the dialer if it is available.` : 'Which network are you using: Airtel, Safaricom, or Telkom Kenya?', safe:!!operator};
-  return {kind:'unknown', label:'Need a little more detail', message:'I didn’t understand that. Try “Call John,” “Open WhatsApp,” or “Check my Airtel balance.”', safe:true};
+function streamText(text, setResponse, timers, done) {
+  timers.current.forEach(clearTimeout);
+  timers.current = [];
+  setResponse('');
+  [...text].forEach((_, index) => timers.current.push(setTimeout(() => setResponse(text.slice(0, index + 1)), index * 13)));
+  timers.current.push(setTimeout(done, text.length * 13 + 280));
 }
 
-function App(){
-  const [state,setState]=useState('idle'); const [transcript,setTranscript]=useState(''); const [response,setResponse]=useState('Ready when you are.'); const [command,setCommand]=useState(null); const recognition=useRef(null); const timers=useRef([]);
-  const clearTimers=()=>{timers.current.forEach(clearTimeout);timers.current=[]};
-  const speak=useCallback((text)=>{ if('speechSynthesis' in window){window.speechSynthesis.cancel(); const u=new SpeechSynthesisUtterance(text); u.rate=.95; window.speechSynthesis.speak(u)}},[]);
-  const stream=(text,done)=>{ setResponse(''); [...text].forEach((_,i)=>timers.current.push(setTimeout(()=>setResponse(text.slice(0,i+1)),i*13))); timers.current.push(setTimeout(done, text.length*13+280)); };
-  const execute=useCallback((input)=>{ clearTimers(); setTranscript(input); setState('processing'); const action=classify(input); setCommand(action); timers.current.push(setTimeout(()=>{ if(!action.safe){setState('confirmation'); stream(action.message,()=>speak(action.message)); return;} setState('executing'); stream(action.message,()=>{setState(action.kind==='unknown'?'error':'success'); speak(action.message)});},650));},[speak]);
-  const toggleListening=()=>{ if(state==='listening'){ recognition.current?.stop(); return; } if(['processing','executing','confirmation'].includes(state)) return; clearTimers(); setTranscript(''); setResponse('Listening for your request…'); setState('listening'); const SR=window.SpeechRecognition||window.webkitSpeechRecognition; if(!SR){timers.current.push(setTimeout(()=>execute('Check my Airtel data balance'),1100));return;} const r=new SR(); recognition.current=r; r.lang='en-KE'; r.interimResults=true; r.continuous=false; r.onresult=e=>{const text=Array.from(e.results).map(x=>x[0].transcript).join('');setTranscript(text);if(e.results[e.results.length-1].isFinal)execute(text)}; r.onerror=()=>execute('Check my Airtel data balance'); r.onend=()=>setState(s=>s==='listening'?'idle':s); r.start(); };
-  const confirm=()=>{setState('executing'); const msg='Confirmed. I’ll open the secure operator flow for you to complete this safely.';stream(msg,()=>{setState('success');speak(msg)})};
-  useEffect(()=>()=>clearTimers(),[]);
-  return <main className="app"><div className="grain"/><header><div className="brand"><span className="brand-mark">S</span><span>SAUTIFLOW</span></div><button className="sound" onClick={()=>speak(response)} aria-label="Repeat spoken response"><Volume2 size={18}/></button></header>
+function App() {
+  const [state, setState] = useState('idle');
+  const [transcript, setTranscript] = useState('');
+  const [response, setResponse] = useState('Ready when you are.');
+  const [command, setCommand] = useState(null);
+  const [online, setOnline] = useState(navigator.onLine);
+  const recognition = useRef(null);
+  const audio = useRef(null);
+  const timers = useRef([]);
+
+  const stopSpeaking = useCallback(() => {
+    window.speechSynthesis?.cancel();
+    if (audio.current) { audio.current.pause(); audio.current.src = ''; audio.current = null; }
+  }, []);
+
+  const speak = useCallback(async (text) => {
+    stopSpeaking();
+    if (online) {
+      try {
+        const result = await fetch('/api/voice', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({text})});
+        if (result.ok) {
+          const source = URL.createObjectURL(await result.blob());
+          const player = new Audio(source);
+          audio.current = player;
+          setState('speaking');
+          player.onended = () => { URL.revokeObjectURL(source); audio.current = null; setState('success'); };
+          await player.play();
+          return;
+        }
+      } catch { /* Browser speech remains the safe fallback. */ }
+    }
+    if ('speechSynthesis' in window) {
+      const utterance = new SpeechSynthesisUtterance(text);
+      utterance.rate = 0.95;
+      utterance.onstart = () => setState('speaking');
+      utterance.onend = () => setState('success');
+      window.speechSynthesis.speak(utterance);
+    }
+  }, [online, stopSpeaking]);
+
+  const finishPlan = useCallback(async (plan) => {
+    setState('executing');
+    let message = `${plan.assistant_message} Nothing has been sent or called yet.`;
+    if (plan.tool === 'ussd.lookup') {
+      const lookup = await fetch('/api/ussd/lookup', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(plan.entities)});
+      const result = await lookup.json();
+      if (!result.found) { setState('error'); setResponse(result.error || 'I could not find a verified telecom service.'); return; }
+      message = `${result.operator} ${result.service} is verified at ${result.ussd}. I can prepare the dialer hand-off, but this browser cannot open Android USSD sessions.`;
+    } else if (plan.tool) {
+      message = `${plan.assistant_message} The Android execution bridge is not connected in this browser, so the action remains prepared rather than completed.`;
+    }
+    streamText(message, setResponse, timers, () => speak(message));
+  }, [speak]);
+
+  const execute = useCallback(async (input) => {
+    timers.current.forEach(clearTimeout);
+    setTranscript(input);
+    setState('processing');
+    setResponse(online ? 'Passing your request to the action planner…' : 'You are offline. Cloud planning is unavailable.');
+    try {
+      const result = await fetch('/api/agent', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({text: input})});
+      const payload = await result.json();
+      if (!result.ok || !payload.plan) throw new Error(payload.error || 'The action planner is unavailable.');
+      const plan = payload.plan;
+      setCommand(plan);
+      if (plan.missing_parameters?.length) {
+        setState('clarifying');
+        const message = plan.assistant_message || `I need: ${plan.missing_parameters.join(', ')}.`;
+        streamText(message, setResponse, timers, () => speak(message));
+      } else if (plan.requires_confirmation) {
+        const message = plan.assistant_message || 'Please confirm before I continue.';
+        setState('confirming');
+        streamText(message, setResponse, timers, () => speak(message));
+      } else await finishPlan(plan);
+    } catch (error) {
+      setState('error');
+      setResponse(error.message || 'The action planner is unavailable. Try again when you have a connection.');
+    }
+  }, [finishPlan, online, speak]);
+
+  const toggleListening = () => {
+    if (state === 'listening') { recognition.current?.stop(); return; }
+    if (['processing', 'clarifying', 'confirming', 'executing', 'speaking'].includes(state)) return;
+    stopSpeaking(); setTranscript(''); setResponse('Listening for your request…'); setState('listening');
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRecognition) { setState('error'); setResponse('Speech recognition is unavailable in this browser. Try Android Chrome or use an example command below.'); return; }
+    const current = new SpeechRecognition();
+    recognition.current = current; current.lang = 'en-KE'; current.interimResults = true; current.continuous = false;
+    current.onresult = (event) => { const text = Array.from(event.results).map((item) => item[0].transcript).join(''); setTranscript(text); if (event.results[event.results.length - 1].isFinal) execute(text); };
+    current.onerror = () => { setState('error'); setResponse('I could not hear that. Please try again.'); };
+    current.onend = () => setState((value) => value === 'listening' ? 'idle' : value);
+    current.start();
+  };
+
+  useEffect(() => {
+    const update = () => setOnline(navigator.onLine);
+    window.addEventListener('online', update); window.addEventListener('offline', update);
+    if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
+    return () => { window.removeEventListener('online', update); window.removeEventListener('offline', update); timers.current.forEach(clearTimeout); stopSpeaking(); };
+  }, [stopSpeaking]);
+
+  const confirm = () => { if (command) finishPlan(command); };
+  return <main className="app"><div className="grain"/><header><div className="brand"><span className="brand-mark">S</span><span>SAUTIFLOW</span></div><button className="sound" onClick={() => speak(response)} aria-label="Repeat spoken response"><Volume2 size={18}/></button></header>
     <section className="hero" aria-live="polite"><p className="eyebrow">VOICE THAT GETS THINGS DONE</p><h1>Your phone,<br/><em>in your voice.</em></h1><p className="intro">Make a call. Send a message. Manage your network. Just ask.</p>
-      <div className={`orb-wrap ${state}`}><div className="ripple r1"/><div className="ripple r2"/><button className="orb" onClick={toggleListening} aria-label={statusCopy[state]}><span className="orb-glow"/>{state==='processing'||state==='executing'?<LoaderCircle className="spin" size={38}/>:state==='success'?<Check size={42}/>:state==='error'?<X size={42}/>:<Mic size={42}/>}</button></div>
-      <div className="status"><span className={`dot ${state}`}/>{statusCopy[state]}</div>
+      <div className={`orb-wrap ${state}`}><div className="ripple r1"/><div className="ripple r2"/><button className="orb" onClick={toggleListening} aria-label={statusCopy[state]}><span className="orb-glow"/>{state === 'processing' || state === 'executing' ? <LoaderCircle className="spin" size={38}/> : state === 'success' || state === 'speaking' ? <Check size={42}/> : state === 'error' ? <X size={42}/> : <Mic size={42}/>}</button></div>
+      <div className="status"><span className={`dot ${state}`}/>{statusCopy[state]} {!online && <span className="offline">· offline</span>}</div>
     </section>
-    <section className="stream" aria-label="Live conversation"><div className="stream-line"/>{transcript&&<p className="heard"><span>You said</span>{transcript}</p>}<p className="response">{response}<span className={state==='listening'||state==='processing'||state==='executing'?'caret':''}/></p>
-      {state==='confirmation'&&<div className="confirm"><p>{command?.label}</p><div><button className="cancel" onClick={()=>{setState('idle');setResponse('No problem. What else can I help with?')}}>Cancel</button><button className="confirm-btn" onClick={confirm}>Confirm <Check size={17}/></button></div></div>}
+    <section className="stream" aria-label="Live conversation"><div className="stream-line"/>{transcript && <p className="heard"><span>You said</span>{transcript}</p>}<p className="response">{response}<span className={state === 'listening' || state === 'processing' || state === 'executing' ? 'caret' : ''}/></p>
+      {state === 'confirming' && <div className="confirm"><p>{command?.assistant_message || 'Continue with this action?'}</p><div><button className="cancel" onClick={() => { setState('idle'); setResponse('No problem. What else can I help with?'); }}>Cancel</button><button className="confirm-btn" onClick={confirm}>Confirm <Check size={17}/></button></div></div>}
     </section>
-    <footer><p>Try saying</p><div className="suggestions">{examples.map(x=><button key={x} onClick={()=>execute(x)}>{x}<ChevronRight size={14}/></button>)}</div><p className="privacy"><Sparkles size={13}/> Sensitive actions always need your confirmation.</p></footer>
-  </main>
+    <footer><p>Try saying</p><div className="suggestions">{examples.map((example) => <button key={example} onClick={() => execute(example)}>{example}<ChevronRight size={14}/></button>)}</div><p className="privacy"><Sparkles size={13}/> Sensitive actions need confirmation. Native execution is reported only when Android confirms it.</p></footer>
+  </main>;
 }
+
 createRoot(document.getElementById('root')).render(<App/>);

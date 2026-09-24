@@ -2,34 +2,54 @@
 
 > **Voice that gets things done.**
 
-SautiFlow is an Android-first voice operating layer for calls, messages, supported app hand-offs and verified telecom workflows. This repository currently delivers the polished, responsive voice-first interface and a safe frontend demonstration flow.
+SautiFlow is a voice-first AI phone-action agent. The PWA is the interface and planning layer; Android native code is the execution layer. The browser must never claim that a call, message, USSD session, or app hand-off completed unless a native bridge reports that result.
 
-## Product safety
+## Current implementation
 
-- Financial, subscription and account-changing actions stop at an explicit **Confirm** step.
-- The app does not claim external completion; it says it will open or prepare the platform hand-off.
-- Production USSD lookup belongs behind a trusted backend registry that records an official source, verification timestamp and confidence. It is intentionally not hardcoded in this client.
-- Keys are server-side only. Set `ELEVENLABS_API_KEY` and `ELEVENLABS_VOICE_ID` in Vercel; do not use `VITE_`-prefixed secret variables.
+- Installable PWA with a standalone manifest, SVG app icons, offline shell, cache-first static assets, and online/offline status.
+- Minimal voice-first UI preserved: one primary orb, streamed response text, accessible controls, confirmation for sensitive actions, and browser speech fallback.
+- `/api/agent` produces a strict, allow-listed tool plan. Qwen is used when `QWEN_API_URL`, `QWEN_API_KEY`, and `QWEN_MODEL` are configured; otherwise a safe local planner is used.
+- `/api/capabilities` reports the registered tool contract and clearly reports that the Android bridge is not connected in the PWA.
+- `/api/ussd/lookup` and `/api/ussd/verify` expose a narrow, source-backed Kenya registry for Safaricom, Airtel Kenya, and Telkom Kenya. Untrusted or malformed codes are rejected.
+- `/api/africastalking/ussd` intentionally reports configuration/implementation status until the current Africa's Talking API and callback contract is provided. It does not invent an external integration.
+- `/api/voice` remains a server-only ElevenLabs proxy. The browser calls it when configured and falls back to speech synthesis without exposing credentials.
 
-## Architecture direction
+## Architecture boundary
 
-| Layer | Responsibility |
-| --- | --- |
-| Voice UI | Accessible tap-to-talk control, state feedback and streamed transcript |
-| Intent orchestration | Classify a spoken request, extract entities and decide whether confirmation is necessary |
-| Telecom knowledge | Backend-managed, official-source USSD registry with validation and expiry |
-| Android automation | Kotlin modules for contacts, dial intents, SMS compose intents, WhatsApp deep links and graceful fallbacks |
-| Voice output | Browser fallback now; `/api/voice` is a server-only ElevenLabs streaming proxy for production integration |
-
-The browser demo uses the Web Speech API when available, and gracefully demonstrates the Airtel balance flow where speech recognition is unavailable. Android production integration should use native recognition and Android intents instead of pretending that a web page can execute calls, USSD sessions, or WhatsApp messages.
-
-## Run locally
-
-```bash
-npm install
-npm run dev
+```text
+PWA voice UI → /api/agent → Qwen/local safe planner → registered tool plan
+                                      ↓
+                         Capacitor/Kotlin Android bridge (next phase)
+                                      ↓
+                           Android intents/accessibility/native APIs
 ```
 
-## Deploy on Vercel
+The current PWA prepares and reports plans honestly. It does not pretend to open Android apps, read private messages, send SMS, execute USSD, or place calls from a browser.
 
-Import the repository in Vercel, add the server-side environment variables described above, and deploy. The included SPA rewrite keeps the single voice screen available at every route.
+## Server environment
+
+Set only the variables for integrations that are actually configured:
+
+```text
+ELEVENLABS_API_KEY=
+ELEVENLABS_VOICE_ID=
+QWEN_API_URL=
+QWEN_API_KEY=
+QWEN_MODEL=
+AFRICASTALKING_API_KEY=
+AFRICASTALKING_USERNAME=
+AFRICASTALKING_USSD_SERVICE_CODE=
+AFRICASTALKING_CALLBACK_URL=
+```
+
+Never use `VITE_` prefixes for secrets. Never store PINs, OTPs, passwords, or mobile-money credentials.
+
+## Run and test locally
+
+```bash
+pnpm install
+pnpm run build
+pnpm run dev
+```
+
+The next implementation phase is the Android wrapper and Kotlin execution layer for contextual permissions, contacts, dialer, SMS, WhatsApp/Messenger hand-offs, and verified USSD opening.

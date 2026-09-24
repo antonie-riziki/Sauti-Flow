@@ -4,11 +4,12 @@
  */
 export default async function handler(request, response) {
   if (request.method !== 'POST') return response.status(405).json({ error: 'Method not allowed' });
-  const { text, voiceId } = request.body || {};
+  const { text, voiceId: requestedVoiceId } = request.body || {};
   if (!text || typeof text !== 'string') return response.status(400).json({ error: 'A text response is required.' });
-  if (!process.env.ELEVENLABS_API_KEY) return response.status(503).json({ error: 'Voice service is not configured.' });
+  const voiceId = requestedVoiceId || process.env.ELEVENLABS_VOICE_ID;
+  if (!process.env.ELEVENLABS_API_KEY || !voiceId) return response.status(503).json({ error: 'Voice service is not configured.' });
 
-  const upstream = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${voiceId || process.env.ELEVENLABS_VOICE_ID}/stream`, {
+  const upstream = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(voiceId)}/stream`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'xi-api-key': process.env.ELEVENLABS_API_KEY, Accept: 'audio/mpeg' },
     body: JSON.stringify({ text, model_id: 'eleven_multilingual_v2' })
