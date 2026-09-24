@@ -52,4 +52,33 @@ pnpm run build
 pnpm run dev
 ```
 
-The next implementation phase is the Android wrapper and Kotlin execution layer for contextual permissions, contacts, dialer, SMS, WhatsApp/Messenger hand-offs, and verified USSD opening.
+## Android / Capacitor
+
+The repository now includes a Capacitor Android project and the `SautiFlowBridge` Kotlin plugin. The browser keeps using the predictable `NATIVE_BRIDGE_UNAVAILABLE` result; Android performs only allow-listed, structured operations.
+
+Implemented native methods:
+
+- `getStatus()` — real Android handshake, installed-app and permission status.
+- `openApp()` — trusted package registry for WhatsApp, Messenger, and Messages.
+- `openDialer()` / `makeCall()` — safe `ACTION_DIAL` flows for phone numbers and verified USSD codes.
+- `composeSms()` — opens a new SMS conversation for a direct number with the message prefilled; the user taps Send.
+- `composeWhatsApp()` — opens a WhatsApp `wa.me` conversation for a direct number with the message prefilled; the user taps Send.
+- `executeUssd()` — validates the code, requests contextual phone permission, calls Android `sendUssdRequest()` where supported, and returns the carrier callback or a structured failure.
+- `searchContacts()` — contextual `READ_CONTACTS` permission and ambiguity-aware local search.
+- `getAccessibilityStatus()` — reports the opt-in service state without enabling it automatically.
+
+Direct numbers do not require a saved contact. For example, `Text 0712345678 saying I am running late` opens an SMS conversation for that number, while `Call 0712345678` opens the dialer with the number ready. The app does not silently send messages or place calls.
+
+### Android requirements
+
+Install Node/pnpm, Android Studio, an Android SDK with the project compile/target API, and a JDK supported by the installed Android Gradle Plugin. Then:
+
+```bash
+pnpm install
+pnpm run cap:sync
+pnpm run cap:open:android
+```
+
+In Android Studio, select an emulator or physical Android device and run the `app` configuration. For a physical device, enable Developer options and USB debugging. Test with Logcat filtered to `SAUTIFLOW_BRIDGE`.
+
+The manifest declares `INTERNET`, `CALL_PHONE`, `READ_CONTACTS`, `SEND_SMS`, and `READ_SMS`; runtime permissions are requested contextually. Accessibility is optional and must be enabled by the user in Android Settings. Android/carrier support for native USSD varies; the fallback is opening the dialer with the verified code. The current environment has no Java/Android SDK, so an APK build and physical-device verification must be completed from Android Studio or a configured Android CI runner.
